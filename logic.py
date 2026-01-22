@@ -7,59 +7,84 @@ def load_data():
         # Load Components
         components_df = pd.read_csv('data/components.csv')
         
-        # Standardize Columns if user uploads different format
-        # Map: name->Name, category->Category, price->BasePrice, volatility->Volatility
-        col_map = {
+        # Standardize Columns for Components
+        col_map_comps = {
             'name': 'Name', 'category': 'Category', 
             'price': 'BasePrice', 'volatility': 'Volatility'
         }
-        components_df.rename(columns=col_map, inplace=True)
+        components_df.rename(columns=col_map_comps, inplace=True)
         
-        # Ensure we have the required columns
-        required_cols = ['Name', 'Category', 'BasePrice', 'Volatility']
-        if not all(col in components_df.columns for col in required_cols):
-             # Try to match case-insensitive
+        # Fallback capitalization if map didn't catch everything
+        if 'BasePrice' not in components_df.columns:
              components_df.columns = [c.title() for c in components_df.columns]
-             # Remap 'Price' to 'BasePrice' if needed
-             if 'Price' in components_df.columns and 'BasePrice' not in components_df.columns:
-                 components_df.rename(columns={'Price': 'BasePrice'}, inplace=True)
-
-        # Clean Price Column (remove '$' and ',')
+             if 'Price' in components_df.columns: components_df.rename(columns={'Price': 'BasePrice'}, inplace=True)
+        
+        # Clean Price Column
         if components_df['BasePrice'].dtype == 'object':
             components_df['BasePrice'] = components_df['BasePrice'].astype(str).str.replace('$', '').str.replace(',', '').str.replace('+', '').str.strip()
             components_df['BasePrice'] = pd.to_numeric(components_df['BasePrice'], errors='coerce')
         
-        # Drop rows with invalid data
         components_df.dropna(subset=['BasePrice', 'Volatility'], inplace=True)
 
         # Load Events
         events_df = pd.read_csv('data/events.csv')
+        
+        # Standardize Columns for Events
+        # Expected: EventName, Probability, Multiplier, target_type, target_detail
+        # CSV has: event_name, probability, multiplier, target_type, target_detail
+        col_map_events = {
+            'event_name': 'EventName',
+            'probability': 'Probability', 
+            'multiplier': 'Multiplier'
+        }
+        events_df.rename(columns=col_map_events, inplace=True)
+        
         return components_df, events_df
     except Exception as e:
         print(f"Error loading data: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-def calculate_build_base_price(selected_parts_indices, components_df):
-    """Calculates the base price of the selected build."""
-    if not selected_parts_indices:
-        return 0.0
+def calculate_event_impact_matrix(components_df, events_df):
+    """
+    Pre-calculates the multiplier for every (Event, Component) pair.
+    Returns a matrix of shape (n_events, n_components).
+    """
+    n_events = len(events_df)
+    n_components = len(components_df)
     
-    # helper to process inputs as a list of indices or rows
-    selected_parts = components_df.loc[selected_parts_indices]
-    return selected_parts['BasePrice'].sum()
+    # Initialize with 1.0 (no impact)
+    impact_matrix = np.ones((n_events, n_components))
+    
+    # Iterate over events to fill the matrix
+    for i, event in events_df.iterrows():
+        # 1. Category Filter
+        if event['target_type'] == "ALL":
+            mask = np.ones(n_components, dtype=bool)
+        else:
+            mask = (components_df['Category'] == event['target_type']).values
+
+        # 2. Detail Filter
+        detail = str(event['target_detail'])
+        clean_detail = detail.replace('$', '').replace(',', '').strip()
+        is_numeric_target = clean_detail.replace('.', '', 1).isdigit() if clean_detail else False
+        
+        if is_numeric_target:
+            target_score = float(clean_detail)
+            vol_scores = components_df['Volatility'].values
+            score_mask = np.isclose(vol_scores, target_score, atol=0.01)
+            mask = mask & score_mask
+        elif detail != "ALL" and detail != "nan":
+            name_mask = components_df['Name'].str.contains(detail, case=False, na=False).values
+            mask = mask & name_mask
+
+        # 3. Apply Multiplier (Using TitleCase 'Multiplier')
+        impact_matrix[i, mask] = event['Multiplier']
+        
+    return impact_matrix
 
 def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None, events_df=None):
     """
-    Runs a Monte Carlo simulation for the selected build.
-    
-    Args:
-        selected_parts_indices (list): List of indices of the selected parts in components_df.
-        n_iterations (int): Number of simulations to run.
-        components_df (pd.DataFrame): Dataframe of all components.
-        events_df (pd.DataFrame): Dataframe of all possible events.
-        
-    Returns:
-        dict: Simulation results including 'final_costs', 'base_price', 'survival_rate'.
+    Runs a Monte Carlo simulation using the High-Precision Targeting Matrix.
     """
     if components_df is None or events_df is None:
         components_df, events_df = load_data()
@@ -67,80 +92,65 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
     if not selected_parts_indices or components_df.empty or events_df.empty:
         return {
             'final_costs': [],
-            'base_price': 0,
-            'mean_cost': 0,
-            'median_cost': 0,
-            'worst_case': 0,
-            'best_case': 0
+            'base_price': 0, 'mean_cost': 0, 'median_cost': 0,
+            'worst_case': 0, 'best_case': 0
         }
 
     # Extract selected parts
-    build_parts = components_df.loc[selected_parts_indices].copy()
-    base_price = build_parts['BasePrice'].sum()
+    # We need to map selected_indices (which are likely DataFrame indices) to positions in the component_df
+    # But wait, run_simulation receives selected_parts_indices which might be from the User Selection.
+    # To keep the matrix aligned, we should perform calculations on ALL components, then just pick the selected ones.
+    # OR, filter components first? 
+    # Better: Pre-calculate the FULL matrix for all components (since n_components is small ~1000).
     
-    # Pre-calculate probabilities and multipliers for vectorization
-    event_probs = events_df['Probability'].values
-    event_multipliers = events_df['Multiplier'].values
-    num_events = len(events_df)
+    # Calculate Impact Matrix (n_events, n_components)
+    impact_matrix = calculate_event_impact_matrix(components_df, events_df)
+    
+    # Filter the matrix for only the *selected* components to save memory/time during simulation
+    # selected_parts_indices is a list of index labels. We need integer positions (iloc).
+    # Get integer locations of the selected indices
+    selected_positions = [components_df.index.get_loc(idx) for idx in selected_parts_indices]
+    
+    # Shape: (n_events, n_selected_parts)
+    selected_impact_matrix = impact_matrix[:, selected_positions]
+    
+    # Base Prices of selected parts
+    base_prices = components_df.loc[selected_parts_indices, 'BasePrice'].values
+    total_base_price = base_prices.sum()
     
     # Simulation Logic
-    # We want to simulate N iterations. 
-    # In each iteration, each event might occur based on its probability.
-    # If multiple events occur, we assume their multipliers compound (or sum? implementation choice).
-    # Plan: Compounding multipliers makes sense for "shocks".
-    # However, to avoid extreme explosions, let's just take the product of all triggered multipliers.
-    # ALSO, we need to apply the specialized logic: 
-    # "Price multipliers are applied... using part volatility as a dampener/amplifier?"
-    # Implementation: 
-    # Effective Multiplier for Part P = 1 + (Global_Multiplier - 1) * Volatility_of_P
-    # So if Global Multiplier is 1.5 (50% increase) and Part Volatility is 0.5,
-    # The part price increases by 0.5 * 50% = 25%.
+    num_events = len(events_df)
+    event_probs = events_df['Probability'].values
     
-    simulation_results = []
-    
-    # Optimized Vectorized approach
-    # Shape: (n_iterations, num_events) -> boolean matrix of triggered events
+    # 1. Generate Triggered Events (n_iterations, n_events) [0 or 1]
     random_matrix = np.random.rand(n_iterations, num_events)
-    triggered_events = random_matrix < event_probs
+    triggered_events = (random_matrix < event_probs).astype(float)
     
-    # Calculate Global Multiplier for each iteration
-    # Start with 1.0. For each triggered event, multiply by its multiplier.
-    # We can use np.prod where triggered.
+    # 2. Calculate Final Multipliers for each component in each iteration
+    # We want: Component_Final_Multiplier = Product(triggered_event_multipliers)
+    # Log Trick: Log(Final) = Sum( Triggered * Log(Event_Mult) )
+    # Matrix Mult: (n_iterations, n_events) @ (n_events, n_selected_parts) 
+    # Result: (n_iterations, n_selected_parts)
     
-    # Create a matrix of multipliers. If not triggered, multiplier is 1.0.
-    # where(condition, x, y) -> if triggered, use multiplier, else 1.0
-    run_multipliers = np.where(triggered_events, event_multipliers, 1.0)
+    log_impacts = np.log(selected_impact_matrix)
+    log_final_multipliers = triggered_events @ log_impacts
     
-    # Product across events for each iteration -> (n_iterations,)
-    global_multipliers = np.prod(run_multipliers, axis=1)
+    final_multipliers = np.exp(log_final_multipliers)
     
-    # Now simulate part prices for each iteration
-    # build_parts has 'BasePrice' and 'Volatility'
-    # Cost_i = Sum( Part_j_Base * (1 + (Global_Multiplier_i - 1) * Part_j_Volatility) )
+    # 3. Calculate Item Costs
+    # Item_Cost[iter, item] = Base_Price[item] * Final_Multiplier[iter, item]
+    # base_prices shape (n_selected,) broadcast against (n_iterations, n_selected)
+    final_item_costs = final_multipliers * base_prices
     
-    # Let's vectorize this calculation too.
-    # global_multipliers is array of size N
-    # parts_base is array of size P
-    # parts_volatility is array of size P
-    
-    # We need Sum over j of: Part_j_Base + Part_j_Base * Part_j_Volatility * (Global_Multiplier_i - 1)
-    # = Sum(Part_j_Base) + (Global_Multiplier_i - 1) * Sum(Part_j_Base * Part_j_Volatility)
-    
-    total_base_price = build_parts['BasePrice'].sum()
-    weighted_volatility_component = (build_parts['BasePrice'] * build_parts['Volatility']).sum()
-    
-    # Formula: Total_Cost_i = Base_Total + (Global_Mult_i - 1) * Weighted_Vol_Sum
-    # Check logic: 
-    # if Global_Mult is 1.0, cost = Base_Total. Correct.
-    # if Global_Mult is 1.5, Cost = Base_Total + 0.5 * Sum(Price * Volatility). Correct.
-    
-    final_costs = total_base_price + (global_multipliers - 1) * weighted_volatility_component
+    # 4. Total Build Cost per Iteration
+    # Sum across items (axis 1)
+    final_build_costs = final_item_costs.sum(axis=1)
     
     return {
-        'final_costs': final_costs,
+        'final_costs': final_build_costs,
         'base_price': total_base_price,
-        'mean_cost': np.mean(final_costs),
-        'median_cost': np.median(final_costs),
-        'worst_case': np.max(final_costs),
-        'best_case': np.min(final_costs)
+        'mean_cost': np.mean(final_build_costs),
+        'median_cost': np.median(final_build_costs),
+        'worst_case': np.max(final_build_costs),
+        'best_case': np.min(final_build_costs)
     }
