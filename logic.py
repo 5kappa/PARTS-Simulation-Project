@@ -1,5 +1,9 @@
 import pandas as pd
 import numpy as np
+import json
+import os
+
+RIGS_FILE = 'data/saved_rigs.json'
 
 def load_data():
     """Loads components and events data from CSV files."""
@@ -82,9 +86,11 @@ def calculate_event_impact_matrix(components_df, events_df):
         
     return impact_matrix
 
-def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None, events_df=None):
+def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None, events_df=None, time_horizon_months=12):
     """
-    Runs a Monte Carlo simulation using the High-Precision Targeting Matrix.
+    Runs a Monte Carlo simulation.
+    time_horizon_months: Scaling factor for probability (default 12 months).
+    P_t = 1 - (1 - P_annual)^(t/12)
     """
     if components_df is None or events_df is None:
         components_df, events_df = load_data()
@@ -97,19 +103,12 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
         }
 
     # Extract selected parts
-    # We need to map selected_indices (which are likely DataFrame indices) to positions in the component_df
-    # But wait, run_simulation receives selected_parts_indices which might be from the User Selection.
-    # To keep the matrix aligned, we should perform calculations on ALL components, then just pick the selected ones.
-    # OR, filter components first? 
-    # Better: Pre-calculate the FULL matrix for all components (since n_components is small ~1000).
-    
-    # Calculate Impact Matrix (n_events, n_components)
-    impact_matrix = calculate_event_impact_matrix(components_df, events_df)
-    
-    # Filter the matrix for only the *selected* components to save memory/time during simulation
     # selected_parts_indices is a list of index labels. We need integer positions (iloc).
     # Get integer locations of the selected indices
     selected_positions = [components_df.index.get_loc(idx) for idx in selected_parts_indices]
+    
+    # Calculate Impact Matrix (n_events, n_components)
+    impact_matrix = calculate_event_impact_matrix(components_df, events_df)
     
     # Shape: (n_events, n_selected_parts)
     selected_impact_matrix = impact_matrix[:, selected_positions]
@@ -120,7 +119,17 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
     
     # Simulation Logic
     num_events = len(events_df)
-    event_probs = events_df['Probability'].values
+    
+    # Scale Probabilities based on Time Horizon
+    # Base probabilities in CSV are assumed Annual (12 months)
+    annual_probs = events_df['Probability'].values
+    
+    if time_horizon_months == 12:
+        event_probs = annual_probs
+    else:
+        # Scale: P_t = 1 - (1 - P)^t_ratio
+        t_ratio = time_horizon_months / 12.0
+        event_probs = 1 - (1 - annual_probs) ** t_ratio
     
     # 1. Generate Triggered Events (n_iterations, n_events) [0 or 1]
     random_matrix = np.random.rand(n_iterations, num_events)
@@ -151,6 +160,94 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
         'base_price': total_base_price,
         'mean_cost': np.mean(final_build_costs),
         'median_cost': np.median(final_build_costs),
+        'cost_90th': np.percentile(final_build_costs, 90),
+        'var_95': np.percentile(final_build_costs, 95),
         'worst_case': np.max(final_build_costs),
-        'best_case': np.min(final_build_costs)
+        'best_case': np.min(final_build_costs),
+        'triggered_events': triggered_events  # Added for Sensitivity Analysis
     }
+
+def calculate_sensitivity(simulation_results, events_df):
+    """
+    Calculates the 'Dollar Impact' of each event.
+    Impact = Mean(Cost | Event Happened) - Mean(Cost | Event Didn't Happen)
+    """
+    triggered_events = simulation_results.get('triggered_events')
+    final_costs = simulation_results.get('final_costs')
+    
+    if triggered_events is None or final_costs is None:
+        return pd.DataFrame()
+        
+    impacts = []
+    
+    # Iterate through each event column index
+    for i, event_row in events_df.iterrows():
+        event_name = event_row['EventName']
+        
+        # Boolean mask: True where event i happened
+        # triggered_events is (n_iterations, n_events)
+        event_happened_mask = triggered_events[:, i] == 1.0
+        
+        # Only calculate if we have a mix of true/false (otherwise variance is 0)
+        count_true = np.sum(event_happened_mask)
+        count_total = len(final_costs)
+        
+        if count_true > 0 and count_true < count_total:
+            cost_with = np.mean(final_costs[event_happened_mask])
+            cost_without = np.mean(final_costs[~event_happened_mask])
+            impact = cost_with - cost_without
+            occurrence_rate = count_true / count_total
+        else:
+            impact = 0.0
+            occurrence_rate = 1.0 if count_true == count_total else 0.0
+            
+        impacts.append({
+            'Event': event_name, 
+            'Impact ($)': impact,
+            'Frequency': occurrence_rate
+        })
+        
+    # Return sorted by absolute impact
+    df = pd.DataFrame(impacts)
+    if not df.empty:
+        df = df.sort_values(by='Impact ($)', key=abs, ascending=False)
+    return df
+
+def load_builds():
+    """Loads saved builds from JSON file."""
+    if not os.path.exists(RIGS_FILE):
+        return {}
+    try:
+        with open(RIGS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading rigs: {e}")
+        return {}
+
+def save_build(name, selected_indices):
+    """Saves a build to the JSON file."""
+    rigs = load_builds()
+    # Convert to standard Python ints for JSON serialization
+    clean_indices = [int(i) for i in selected_indices]
+    rigs[name] = clean_indices
+    try:
+        with open(RIGS_FILE, 'w') as f:
+            json.dump(rigs, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving rig: {e}")
+        return False
+
+def delete_build(name):
+    """Deletes a build from the JSON file."""
+    rigs = load_builds()
+    if name in rigs:
+        del rigs[name]
+        try:
+            with open(RIGS_FILE, 'w') as f:
+                json.dump(rigs, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"Error deleting rig: {e}")
+            return False
+    return False
