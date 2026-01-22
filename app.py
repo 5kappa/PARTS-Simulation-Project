@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+
+import plotly.express as px
+import plotly.graph_objects as go
 import logic
 import sys
 from streamlit.web import cli as stcli
@@ -26,6 +28,27 @@ st.markdown("""
 This tool uses **Monte Carlo Simulation** to test if your PC build budget can survive future market volatility.
 It simulates **1,000+ market scenarios** (AI shortages, crypto booms, supply gluts) to estimate probabilistic costs.
 """)
+
+# Custom CSS for Metric Cards and General Polish
+st.markdown("""
+<style>
+    div[data-testid="stMetric"] {
+        background-color: #1E1E1E;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #333;
+        transition: transform 0.2s;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: scale(1.02);
+        border-color: #555;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 24px !important;
+        font-weight: 700 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Sidebar
 st.sidebar.header("Simulation Settings")
@@ -140,6 +163,26 @@ if comparison_mode:
                 cost_b = components_df.loc[indices_b, 'BasePrice'].sum()
                 st.metric("Base Price B", f"${cost_b:,.2f}")
         
+        # Component Breakdown
+        with st.expander("🔍 View Component Breakdown"):
+            bd_col1, bd_col2 = st.columns(2)
+            
+            with bd_col1:
+                st.markdown(f"**{rig_a_name}**")
+                if indices_a:
+                    comps_a = components_df.loc[indices_a, ['Category', 'Name', 'BasePrice']]
+                    st.dataframe(comps_a, hide_index=True)
+                else:
+                    st.info("No components selected.")
+            
+            with bd_col2:
+                st.markdown(f"**{rig_b_name}**")
+                if indices_b:
+                    comps_b = components_df.loc[indices_b, ['Category', 'Name', 'BasePrice']]
+                    st.dataframe(comps_b, hide_index=True)
+                else:
+                    st.info("No components selected.")
+
         st.markdown("---")
         
         if st.button("🚀 Compare Builds", type="primary"):
@@ -149,58 +192,95 @@ if comparison_mode:
                 with st.spinner("Simulating both futures..."):
                     res_a = logic.run_simulation(indices_a, n_iterations, components_df, events_df, time_horizon)
                     res_b = logic.run_simulation(indices_b, n_iterations, components_df, events_df, time_horizon)
+                    st.session_state.comp_res_a = res_a
+                    st.session_state.comp_res_b = res_b
+                    st.session_state.comp_active = True
+        
+        if st.session_state.get('comp_active'):
+            # Retrieve from session state
+            res_a = st.session_state.comp_res_a
+            res_b = st.session_state.comp_res_b
+            
+            # METRICS COMPARISON
+            st.subheader("Risk Metrics Comparison")
+            
+            # Calculate metrics
+            surv_a = (np.sum(res_a['final_costs'] <= budget_limit) / n_iterations) * 100
+            surv_b = (np.sum(res_b['final_costs'] <= budget_limit) / n_iterations) * 100
+            
+            comp_data = {
+                "Metric": ["Median Component Cost", "95% VaR (Worst Case)", "Budget Survival Rate"],
+                f"{rig_a_name}": [
+                    f"${res_a['median_cost']:,.2f}", 
+                    f"${res_a['var_95']:,.2f}", 
+                    f"{surv_a:.1f}%"
+                ],
+                f"{rig_b_name}": [
+                    f"${res_b['median_cost']:,.2f}", 
+                    f"${res_b['var_95']:,.2f}", 
+                    f"{surv_b:.1f}%"
+                ],
+                "Difference": [
+                    f"${res_b['median_cost'] - res_a['median_cost']:,.2f}",
+                    f"${res_b['var_95'] - res_a['var_95']:,.2f}",
+                    f"{surv_b - surv_a:.1f}%"
+                ]
+            }
+            
+            comp_df = pd.DataFrame(comp_data)
+            
+            # Apply styling for clearer reading
+            styled_df = comp_df.style.set_properties(**{
+                'font-size': '18px',
+                'text-align': 'center'
+            }).set_table_styles([
+                {'selector': 'th', 'props': [('font-size', '18px'), ('text-align', 'center')]}
+            ])
+            
+            st.dataframe(styled_df, hide_index=True)
+            
+            # OVERLAPPING HISTOGRAM (Plotly)
+            st.subheader("Probability Distribution Comparison")
+            
+            # Prepare data for Plotly
+            df_a = pd.DataFrame({'Cost': res_a['final_costs'], 'Build': rig_a_name})
+            df_b = pd.DataFrame({'Cost': res_b['final_costs'], 'Build': rig_b_name})
+            df_combined = pd.concat([df_a, df_b])
+            
+            fig = px.histogram(
+                df_combined, 
+                x="Cost", 
+                color="Build", 
+                barmode="overlay",
+                nbins=50,
+                opacity=0.6,
+                color_discrete_map={rig_a_name: '#0068c9', rig_b_name: '#ff2b2b'}
+            )
+            
+            fig.add_vline(x=budget_limit, line_dash="dash", line_color="red", annotation_text="Budget")
+            
+            fig.update_layout(
+                xaxis_title="Total Cost ($)",
+                yaxis_title="Frequency",
+                template="plotly_dark",
+                hovermode="x unified",
+                legend_title_text="Build Configuration"
+            )
+            
+            # Checkbox for extra details
+            show_details = st.checkbox("Show Detailed Thresholds (Base Price & VaR)")
+            st.caption("Note: Enabling this may make the chart look cluttered due to overlapping lines.")
+            
+            if show_details:
+                # Base Price Lines
+                fig.add_vline(x=res_a['base_price'], line_dash="dot", line_color="#0068c9", annotation_text=f"Base A")
+                fig.add_vline(x=res_b['base_price'], line_dash="dot", line_color="#ff2b2b", annotation_text=f"Base B")
                 
-                # METRICS COMPARISON
-                st.subheader("Risk Metrics Comparison")
-                
-                # Calculate metrics
-                surv_a = (np.sum(res_a['final_costs'] <= budget_limit) / n_iterations) * 100
-                surv_b = (np.sum(res_b['final_costs'] <= budget_limit) / n_iterations) * 100
-                
-                comp_data = {
-                    "Metric": ["Median Component Cost", "95% VaR (Worst Case)", "Budget Survival Rate"],
-                    f"{rig_a_name}": [
-                        f"${res_a['median_cost']:,.2f}", 
-                        f"${res_a['var_95']:,.2f}", 
-                        f"{surv_a:.1f}%"
-                    ],
-                    f"{rig_b_name}": [
-                        f"${res_b['median_cost']:,.2f}", 
-                        f"${res_b['var_95']:,.2f}", 
-                        f"{surv_b:.1f}%"
-                    ],
-                    "Difference": [
-                        f"${res_b['median_cost'] - res_a['median_cost']:,.2f}",
-                        f"${res_b['var_95'] - res_a['var_95']:,.2f}",
-                        f"{surv_b - surv_a:.1f}%"
-                    ]
-                }
-                
-                comp_df = pd.DataFrame(comp_data)
-                
-                # Apply styling for clearer reading
-                styled_df = comp_df.style.set_properties(**{
-                    'font-size': '18px',
-                    'text-align': 'center'
-                }).set_table_styles([
-                    {'selector': 'th', 'props': [('font-size', '18px'), ('text-align', 'center')]}
-                ])
-                
-                st.dataframe(styled_df, hide_index=True, use_container_width=True)
-                
-                # OVERLAPPING HISTOGRAM
-                st.subheader("Probability Distribution Comparison")
-                fig, ax = plt.subplots(figsize=(10, 5))
-                
-                ax.hist(res_a['final_costs'], bins=50, alpha=0.5, label=f'Rig A: {rig_a_name}', color='blue')
-                ax.hist(res_b['final_costs'], bins=50, alpha=0.5, label=f'Rig B: {rig_b_name}', color='orange')
-                
-                ax.axvline(budget_limit, color='red', linestyle='--', linewidth=2, label='Budget Limit')
-                
-                ax.set_xlabel('Total Cost ($)')
-                ax.set_ylabel('Frequency')
-                ax.legend()
-                st.pyplot(fig)
+                # VaR Lines
+                fig.add_vline(x=res_a['var_95'], line_dash="dash", line_color="#0068c9", annotation_text=f"VaR A")
+                fig.add_vline(x=res_b['var_95'], line_dash="dash", line_color="#ff2b2b", annotation_text=f"VaR B")
+            
+            st.plotly_chart(fig)
 
 
 # ==========================================
@@ -334,25 +414,31 @@ else:
                 
                 with tab1:
                     st.subheader("Cost Probability Distribution")
-                    fig, ax = plt.subplots(figsize=(10, 5))
                     
-                    # Histogram
-                    n, bins, patches = ax.hist(final_costs, bins=50, color='skyblue', alpha=0.7, edgecolor='black', label='Simulated Costs')
+                    # Plotly Histogram
+                    fig = px.histogram(
+                        x=final_costs, 
+                        nbins=50, 
+                        template="plotly_dark",
+                        labels={'x': 'Total Cost ($)'},
+                        color_discrete_sequence=['#00c0f2']
+                    )
                     
-                    # Lines for Budget, Base, and 90th
-                    ax.axvline(base_price, color='green', linestyle='dashed', linewidth=2, label=f'Base Price (${base_price})')
-                    ax.axvline(results['cost_90th'], color='orange', linestyle='--', linewidth=2, label=f'90th Pct (${results["cost_90th"]:,.0f})')
-                    ax.axvline(results['var_95'], color='red', linestyle='-.', linewidth=2, label=f'VaR 95% (${results["var_95"]:,.0f})')
-                    ax.axvline(budget_limit, color='black', linestyle='dotted', linewidth=2, label=f'Budget (${budget_limit})')
+                    fig.update_layout(
+                        yaxis_title="Frequency",
+                        showlegend=False,
+                        hovermode="x unified"
+                    )
                     
-                    # Highlight failure zone
-                    if np.max(final_costs) > budget_limit:
-                        ax.axvspan(budget_limit, np.max(final_costs), color='red', alpha=0.1, label='Over Budget')
-
-                    ax.set_xlabel('Total Cost ($)')
-                    ax.set_ylabel('Frequency')
-                    ax.legend()
-                    st.pyplot(fig)
+                    # Vertical Lines
+                    # Base Price (Green)
+                    fig.add_vline(x=base_price, line_dash="dash", line_color="green", annotation_text=f"Base ${base_price:.0f}")
+                    # Budget (Red)
+                    fig.add_vline(x=budget_limit, line_dash="solid", line_color="red", annotation_text=f"Budget ${budget_limit}")
+                    # VaR 95 (Orange)
+                    fig.add_vline(x=results['var_95'], line_dash="dot", line_color="orange", annotation_text=f"VaR 95% ${results['var_95']:.0f}")
+                    
+                    st.plotly_chart(fig)
                     
                     st.info(f"""
                     **Analysis**: 
@@ -363,30 +449,34 @@ else:
                     
                 with tab2:
                     st.subheader("Top Risk Drivers (Sensitivity Analysis)")
-                    st.markdown("This chart shows which events define your financial risk. **Red bars** mean the event increases cost, **Green bars** mean it saves money.")
                     
                     # Calculate
                     sensitivity_df = logic.calculate_sensitivity(results, events_df)
                     
                     if not sensitivity_df.empty:
-                        # Take top 10
-                        top_risks = sensitivity_df.head(10).iloc[::-1] # Reverse for horizontal bar chart
+                        # Take top 10 and reverse for plotting
+                        top_risks = sensitivity_df.head(10).iloc[::-1]
                         
-                        fig2, ax2 = plt.subplots(figsize=(10, 6))
+                        # Color: Red (Bad/Positive) vs Green (Good/Negative)
+                        top_risks['Color'] = top_risks['Impact ($)'].apply(lambda x: '#ff4b4b' if x > 0 else '#21c354')
                         
-                        # Color logic: Red for positive impact (bad for budget), Green for negative (good)
-                        colors = ['#ff4b4b' if x > 0 else '#21c354' for x in top_risks['Impact ($)']]
+                        fig2 = px.bar(
+                            top_risks,
+                            x="Impact ($)",
+                            y="Event",
+                            orientation='h',
+                            text_auto='$.0f',
+                            template="plotly_dark"
+                        )
                         
-                        bars = ax2.barh(top_risks['Event'], top_risks['Impact ($)'], color=colors)
+                        fig2.update_traces(marker_color=top_risks['Color'], textposition='outside')
+                        fig2.update_layout(
+                            xaxis_title="Average Impact on Cost ($)",
+                            yaxis_title="Event",
+                            height=500
+                        )
                         
-                        ax2.set_xlabel('Average Impact on Total Bundle Cost ($)')
-                        ax2.set_title('Event Impact (Tornado Chart)')
-                        ax2.grid(axis='x', linestyle='--', alpha=0.7)
-                        
-                        # Add Labels
-                        ax2.bar_label(bars, fmt='$%.0f', padding=3)
-                        
-                        st.pyplot(fig2)
+                        st.plotly_chart(fig2)
                     else:
                         st.warning("Not enough variance to calculate sensitivity.")
             else:
