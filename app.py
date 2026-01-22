@@ -495,7 +495,8 @@ else:
                     fig.update_layout(
                         yaxis_title="Frequency",
                         showlegend=False,
-                        hovermode="x unified"
+                        hovermode="x unified",
+                        font=dict(size=14)
                     )
                     
                     # Vertical Lines
@@ -541,7 +542,8 @@ else:
                         fig2.update_layout(
                             xaxis_title="Average Impact on Cost ($)",
                             yaxis_title="Event",
-                            height=500
+                            height=500,
+                            font=dict(size=14)
                         )
                         
                         st.plotly_chart(fig2)
