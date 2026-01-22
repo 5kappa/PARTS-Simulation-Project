@@ -1,4 +1,4 @@
-# Budget Resilience Simulator
+# P.A.R.T.S.: P.C. Assembly and Rig Tracking Simulator
 
 A web-based Monte Carlo simulation tool that tests the resilience of a PC build budget against hyper-volatile market conditions. It specifically models high-precision market shocks (e.g., "AI Arms Race" targeting DDR5 RAM) to estimate the probability of your build exceeding its budget.
 
@@ -11,7 +11,7 @@ To demonstrate **Stochastic Modeling** and **Sensitivity Analysis** by simulatin
 - **Real-world Scenarios**: Models 25+ events like AI shortages, logistics strikes, and crypto booms.
 - **Interactive UI**: Built with Streamlit for easy parameter tuning and visualization.
 
-## Installation
+## Setup and Installation for Development
 
 1. **Clone the repository**:
    ```bash
