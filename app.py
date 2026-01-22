@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import logic
 import sys
-from streamlit.web import cli as stcli
+import streamlit.web.cli as stcli
 
 # Page Config (Must be the first Streamlit command)
 st.set_page_config(page_title="P.A.R.T.S.", layout="wide")
@@ -23,22 +23,89 @@ if __name__ == '__main__':
 # Load Data
 components_df, events_df = logic.load_data()
 
-st.title("🖥️ Welcome to P.A.R.T.S: P.C. Assembly & Rig Tracking Simulator!")
 st.markdown("""
-This tool uses **Monte Carlo Simulation** to test if your PC build budget can survive future market volatility.
-It simulates **1,000+ market scenarios** (AI shortages, crypto booms, supply gluts) to estimate probabilistic costs.
-""")
+    <h1>
+        Welcome to <span style='background: linear-gradient(to right, #00C0F2, #0072ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>P.A.R.T.S.</span>: P.C. Assembly & Rig Tracking Simulator!
+    </h1>
+""", unsafe_allow_html=True)
+st.markdown("""
+This tool uses <span style='color: #FFD966;'>**Monte Carlo Simulation**</span> to test if your PC build budget can survive future market volatility.
+It simulates thousands of <a href='#market-events-preview' style='color: #00C0F2; text-decoration: none; border-bottom: 1px solid#00C0F2;'>**market scenarios**</a> to estimate probabilistic costs.
+""", unsafe_allow_html=True)
 
 # Custom CSS for Metric Cards and General Polish
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    /* Apply Inter to body and general text */
+    html, body, .stApp {
+        font-family: 'Inter', sans-serif !important;
+    }
+    
+    /* Specific text elements to ensure Inter is picked up */
+    p, label, input, textarea, .stMarkdown, .stSelectbox, .stTextInput, .stNumberInput, .stAlert {
+        font-family: 'Inter', sans-serif !important;
+    }
+    
+    /* Analysis/Info Box Gradient - Darker */
+    div[data-testid="stAlert"] {
+        background: linear-gradient(135deg, rgba(0, 80, 160, 0.35) 0%, rgba(0, 60, 120, 0.25) 100%) !important;
+        border: 1px solid rgba(0, 150, 220, 0.5) !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Force Inter font on all elements inside the alert */
+    div[data-testid="stAlert"], 
+    div[data-testid="stAlert"] *, 
+    div[data-testid="stAlert"] .stMarkdown,
+    div[data-testid="stAlert"] p,
+    div[data-testid="stAlert"] li,
+    div[data-testid="stAlert"] strong {
+        font-family: 'Inter', sans-serif !important;
+    }
+    
+    /* Apply Poppins to headers */
+    h1, h2, h3, h4, h5, h6, .st-emotion-cache-10trblm {
+        font-family: 'Poppins', sans-serif !important;
+    }
+
+    .stApp {
+        background: linear-gradient(135deg, #0E1117 30%, #161b24 100%);
+        background-attachment: fixed;
+    }
+    
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #2B303B 0%, #1E232E 100%);
+        border-right: 1px solid #333;
+    }
+
+    /* Force sidebar toggle button color */
+    button[kind="header"] {
+        color: #ffffff !important;
+        background-color: transparent !important;
+    }
+    
+    /* Specific fix for the collapsed control if needed */
+    [data-testid="stSidebarCollapsedControl"] {
+        color: #ffffff !important;
+    }
+
     div[data-testid="stMetric"] {
-        background-color: #1E1E1E;
+        background: linear-gradient(135deg, #2b2b2b 0%, #1e1e1e 100%);
         padding: 15px;
         border-radius: 10px;
         border: 1px solid #333;
         transition: transform 0.2s;
     }
+
+    /* Dropdown Menu Item Hover Effect */
+    li[role="option"]:hover, div[role="option"]:hover {
+        background-color: rgba(0, 192, 242, 0.15) !important;
+        cursor: pointer;
+    }
+    
     div[data-testid="stMetric"]:hover {
         transform: scale(1.02);
         border-color: #555;
@@ -63,13 +130,13 @@ else:
     st.sidebar.info("**Time Horizon**: Models market volatility for the **next 12 months** (Annualized Baseline).")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("💾 Manage Builds")
+st.sidebar.subheader("Manage Builds")
 
 # Load saved rigs
 saved_rigs = logic.load_builds()
 
 # Save Logic
-save_name = st.sidebar.text_input("Name New Rig", placeholder="e.g. Dream Build 2025")
+save_name = st.sidebar.text_input("Name New Rig", placeholder="e.g. Dream Build 2026")
 if st.sidebar.button("Save Current Selection"):
     if 'current_indices' in st.session_state and st.session_state.current_indices:
         if save_name:
@@ -96,7 +163,7 @@ if saved_rigs:
     if load_name:
         ld_col1, ld_col2 = st.sidebar.columns(2)
         
-        if ld_col1.button("📂 Load", type="primary", use_container_width=True):
+        if ld_col1.button("Load", type="primary", use_container_width=True):
             loaded = saved_rigs[load_name]
             # Update session state for specific widgets to force them to change
             for idx in loaded:
@@ -107,7 +174,7 @@ if saved_rigs:
             st.session_state.loaded_indices = loaded # Keep track
             st.rerun()
             
-        if ld_col2.button("🗑️ Delete", type="secondary", use_container_width=True):
+        if ld_col2.button("Delete", type="secondary", use_container_width=True):
             if logic.delete_build(load_name):
                 st.sidebar.success(f"Deleted '{load_name}'")
                 st.rerun()
@@ -116,9 +183,10 @@ if saved_rigs:
 
 # Comparison Toggle
 st.sidebar.markdown("---")
-comparison_mode = st.sidebar.checkbox("🔀 Comparison Mode", value=False)
+comparison_mode = st.sidebar.checkbox("Comparison Mode", value=False)
 
 if not events_df.empty:
+    st.sidebar.markdown("<div id='market-events-preview'></div>", unsafe_allow_html=True)
     st.sidebar.header("Market Events Preview")
     st.sidebar.dataframe(events_df[['EventName', 'Probability', 'Multiplier']], hide_index=True)
 else:
@@ -128,7 +196,7 @@ else:
 # COMPARISON MODE UI
 # ==========================================
 if comparison_mode:
-    st.header("🔀 Build Comparison Mode")
+    st.header("Build Comparison Mode")
     
     if not saved_rigs:
         st.warning("You need to save at least one rig before you can compare!")
@@ -185,7 +253,7 @@ if comparison_mode:
 
         st.markdown("---")
         
-        if st.button("🚀 Compare Builds", type="primary"):
+        if st.button("Compare Builds", type="primary"):
             if not indices_a or not indices_b:
                 st.error("Please ensure both builds have components selected.")
             else:
@@ -317,7 +385,7 @@ else:
             # Streamlit handles 'index' vs 'session_state' priority: state wins if key exists.
             
             selected_idx = column.selectbox(
-                f"Select {category_name}", 
+                f"**Select {category_name}**", 
                 options=options, 
                 format_func=lambda x: labels[x],
                 index=0, 
@@ -344,12 +412,12 @@ else:
         # Display Current Total Price
         if selected_indices:
             current_total = components_df.loc[selected_indices, 'BasePrice'].sum()
-            st.subheader(f"💰 Current Build Total: :green[${current_total:,.2f}]")
+            st.subheader(f"Current Build Total: :green[${current_total:,.2f}]")
         
         # Run Simulation
         st.header("2. Run Simulation")
 
-        if st.button("🚀 Run Risk Analysis", type="primary"):
+        if st.button("Run Risk Analysis", type="primary"):
             with st.spinner(f"Simulating 1,000+ futures over {time_horizon} months..."):
                 results = logic.run_simulation(selected_indices, n_iterations, components_df, events_df, time_horizon)
                 
@@ -410,7 +478,7 @@ else:
                 )
                 
                 # Create Tabs
-                tab1, tab2 = st.tabs(["📊 Probability Distribution", "🌪️ Sensitivity Analysis"])
+                tab1, tab2 = st.tabs(["Probability Distribution", "Sensitivity Analysis"])
                 
                 with tab1:
                     st.subheader("Cost Probability Distribution")
@@ -481,3 +549,5 @@ else:
                         st.warning("Not enough variance to calculate sensitivity.")
             else:
                 st.warning("Simulation returned no results. Please check your Component selection.")
+
+

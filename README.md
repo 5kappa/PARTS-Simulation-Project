@@ -13,7 +13,7 @@ To demonstrate **Stochastic Modeling** and **Sensitivity Analysis** by simulatin
 - **Interactive Visualizations**:
     - **Probability Histograms**: See the exact likelihood of price outcomes.
     - **Tornado Charts (Sensitivity Analysis)**: Identify which specific events (e.g., "Taiwan Strait Tension") are driving your risk.
-- **High-Precision Targeting**: Market events target specific ID tags (e.g., "DDR5 Shortage" only affects components with volatility ID `0.95`).
+- **High-Precision Targeting**: Market events target specific ID tags (e.g., "DDR5 Shortage" only affects components with volatility score `0.95`).
 
 ## Setup and Installation for Development
 
