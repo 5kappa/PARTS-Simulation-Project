@@ -5,11 +5,15 @@ A web-based Monte Carlo simulation tool that tests the resilience of a PC build 
 ## Project Goal
 To demonstrate **Stochastic Modeling** and **Sensitivity Analysis** by simulating 1,000+ future market scenarios and their impact on specific PC components.
 
-## Features
-- **Monte Carlo Simulation**: instantly simulates 1,000s of scenarios.
-- **High-Precision Targeting**: Market events target specific components (e.g., only "DDR5" RAM) using volatility score matching.
-- **Real-world Scenarios**: Models 25+ events like AI shortages, logistics strikes, and crypto booms.
-- **Interactive UI**: Built with Streamlit for easy parameter tuning and visualization.
+## Key Features
+- **Monte Carlo Risk Engine**: Instantly simulates 1,000s of market futures to estimate specific financial risks (VaR, Median Cost).
+- **Comparison Mode**: Run side-by-side simulations of two different builds (e.g., "Budget vs. Dream Rig") to compare their survival rates and cost distributions.
+- **Rig Management**: Save, Load, and Delete your build configurations locally.
+- **Dynamic Time Horizon**: Scale risk probability based on your purchasing timeframe (1-24 months).
+- **Interactive Visualizations**:
+    - **Probability Histograms**: See the exact likelihood of price outcomes.
+    - **Tornado Charts (Sensitivity Analysis)**: Identify which specific events (e.g., "Taiwan Strait Tension") are driving your risk.
+- **High-Precision Targeting**: Market events target specific ID tags (e.g., "DDR5 Shortage" only affects components with volatility ID `0.95`).
 
 ## Setup and Installation for Development
 
