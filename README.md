@@ -52,6 +52,13 @@ Alternatively, if you are in the virtual environment, you can simply run:
 python app.py
 ```
 
-## Data Structure
-- `data/components.csv`: List of PC parts with Base Prices and Volatility Scores.
-- `data/events.csv`: List of market events with Probabilities, Multipliers, and Targeting rules.
+## Simulation Inputs (Modifiable)
+
+The engine relies on two CSV files that you can edit to test different parts or scenarios:
+
+- **`data/components.csv`**: The "Menu" of available parts.
+    - *Columns*: `Category`, `Name`, `BasePrice`, `Volatility` (0.0 - 1.0 score).
+- **`data/events.csv`**: The "Deck" of possible market futures.
+    - *Columns*: `EventName`, `Probability` (0.0 - 1.0), `Multiplier` (Impact on price), `Targeting` (Specific parts vs. All).
+
+> **Tip**: You can add your own custom components (e.g., "RTX 5090 Prototype") or invent new crises just by editing these files.

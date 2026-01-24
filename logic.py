@@ -8,34 +8,26 @@ RIGS_FILE = 'data/saved_rigs.json'
 def load_data():
     """Loads components and events data from CSV files."""
     try:
-        # Load Components
         components_df = pd.read_csv('data/components.csv')
         
-        # Standardize Columns for Components
         col_map_comps = {
             'name': 'Name', 'category': 'Category', 
             'price': 'BasePrice', 'volatility': 'Volatility'
         }
         components_df.rename(columns=col_map_comps, inplace=True)
         
-        # Fallback capitalization if map didn't catch everything
         if 'BasePrice' not in components_df.columns:
              components_df.columns = [c.title() for c in components_df.columns]
              if 'Price' in components_df.columns: components_df.rename(columns={'Price': 'BasePrice'}, inplace=True)
         
-        # Clean Price Column
         if components_df['BasePrice'].dtype == 'object':
             components_df['BasePrice'] = components_df['BasePrice'].astype(str).str.replace('$', '').str.replace(',', '').str.replace('+', '').str.strip()
             components_df['BasePrice'] = pd.to_numeric(components_df['BasePrice'], errors='coerce')
         
         components_df.dropna(subset=['BasePrice', 'Volatility'], inplace=True)
 
-        # Load Events
         events_df = pd.read_csv('data/events.csv')
         
-        # Standardize Columns for Events
-        # Expected: EventName, Probability, Multiplier, target_type, target_detail
-        # CSV has: event_name, probability, multiplier, target_type, target_detail
         col_map_events = {
             'event_name': 'EventName',
             'probability': 'Probability', 
@@ -56,18 +48,14 @@ def calculate_event_impact_matrix(components_df, events_df):
     n_events = len(events_df)
     n_components = len(components_df)
     
-    # Initialize with 1.0 (no impact)
     impact_matrix = np.ones((n_events, n_components))
-    
-    # Iterate over events to fill the matrix
+
     for i, event in events_df.iterrows():
-        # 1. Category Filter
         if event['target_type'] == "ALL":
             mask = np.ones(n_components, dtype=bool)
         else:
             mask = (components_df['Category'] == event['target_type']).values
 
-        # 2. Detail Filter
         detail = str(event['target_detail'])
         clean_detail = detail.replace('$', '').replace(',', '').strip()
         is_numeric_target = clean_detail.replace('.', '', 1).isdigit() if clean_detail else False
@@ -80,8 +68,6 @@ def calculate_event_impact_matrix(components_df, events_df):
         elif detail != "ALL" and detail != "nan":
             name_mask = components_df['Name'].str.contains(detail, case=False, na=False).values
             mask = mask & name_mask
-
-        # 3. Apply Multiplier (Using TitleCase 'Multiplier')
         impact_matrix[i, mask] = event['Multiplier']
         
     return impact_matrix
@@ -102,57 +88,35 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
             'worst_case': 0, 'best_case': 0
         }
 
-    # Extract selected parts
-    # selected_parts_indices is a list of index labels. We need integer positions (iloc).
-    # Get integer locations of the selected indices
     selected_positions = [components_df.index.get_loc(idx) for idx in selected_parts_indices]
     
-    # Calculate Impact Matrix (n_events, n_components)
     impact_matrix = calculate_event_impact_matrix(components_df, events_df)
-    
-    # Shape: (n_events, n_selected_parts)
     selected_impact_matrix = impact_matrix[:, selected_positions]
     
-    # Base Prices of selected parts
     base_prices = components_df.loc[selected_parts_indices, 'BasePrice'].values
     total_base_price = base_prices.sum()
     
-    # Simulation Logic
     num_events = len(events_df)
-    
-    # Scale Probabilities based on Time Horizon
-    # Base probabilities in CSV are assumed Annual (12 months)
     annual_probs = events_df['Probability'].values
     
     if time_horizon_months == 12:
         event_probs = annual_probs
     else:
-        # Scale: P_t = 1 - (1 - P)^t_ratio
         t_ratio = time_horizon_months / 12.0
         event_probs = 1 - (1 - annual_probs) ** t_ratio
     
-    # 1. Generate Triggered Events (n_iterations, n_events) [0 or 1]
     random_matrix = np.random.rand(n_iterations, num_events)
     triggered_events = (random_matrix < event_probs).astype(float)
     
-    # 2. Calculate Final Multipliers for each component in each iteration
-    # We want: Component_Final_Multiplier = Product(triggered_event_multipliers)
-    # Log Trick: Log(Final) = Sum( Triggered * Log(Event_Mult) )
-    # Matrix Mult: (n_iterations, n_events) @ (n_events, n_selected_parts) 
-    # Result: (n_iterations, n_selected_parts)
+    # Log trick: Log(Final) = Sum(Triggered * Log(Event_Mult))
+    # Matrix multiplication: (n_iterations, n_events) @ (n_events, n_selected_parts)
     
     log_impacts = np.log(selected_impact_matrix)
     log_final_multipliers = triggered_events @ log_impacts
     
     final_multipliers = np.exp(log_final_multipliers)
-    
-    # 3. Calculate Item Costs
-    # Item_Cost[iter, item] = Base_Price[item] * Final_Multiplier[iter, item]
-    # base_prices shape (n_selected,) broadcast against (n_iterations, n_selected)
     final_item_costs = final_multipliers * base_prices
     
-    # 4. Total Build Cost per Iteration
-    # Sum across items (axis 1)
     final_build_costs = final_item_costs.sum(axis=1)
     
     return {
@@ -164,7 +128,7 @@ def run_simulation(selected_parts_indices, n_iterations=1000, components_df=None
         'var_95': np.percentile(final_build_costs, 95),
         'worst_case': np.max(final_build_costs),
         'best_case': np.min(final_build_costs),
-        'triggered_events': triggered_events  # Added for Sensitivity Analysis
+        'triggered_events': triggered_events
     }
 
 def calculate_sensitivity(simulation_results, events_df):
@@ -180,15 +144,10 @@ def calculate_sensitivity(simulation_results, events_df):
         
     impacts = []
     
-    # Iterate through each event column index
     for i, event_row in events_df.iterrows():
         event_name = event_row['EventName']
-        
-        # Boolean mask: True where event i happened
-        # triggered_events is (n_iterations, n_events)
         event_happened_mask = triggered_events[:, i] == 1.0
         
-        # Only calculate if we have a mix of true/false (otherwise variance is 0)
         count_true = np.sum(event_happened_mask)
         count_total = len(final_costs)
         
@@ -206,8 +165,6 @@ def calculate_sensitivity(simulation_results, events_df):
             'Impact ($)': impact,
             'Frequency': occurrence_rate
         })
-        
-    # Return sorted by absolute impact
     df = pd.DataFrame(impacts)
     if not df.empty:
         df = df.sort_values(by='Impact ($)', key=abs, ascending=False)
@@ -227,7 +184,6 @@ def load_builds():
 def save_build(name, selected_indices):
     """Saves a build to the JSON file."""
     rigs = load_builds()
-    # Convert to standard Python ints for JSON serialization
     clean_indices = [int(i) for i in selected_indices]
     rigs[name] = clean_indices
     try:
